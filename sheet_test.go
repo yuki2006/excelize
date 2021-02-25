@@ -261,6 +261,23 @@ func TestDefinedName(t *testing.T) {
 	assert.NoError(t, f.SaveAs(filepath.Join("test", "TestDefinedName.xlsx")))
 }
 
+func TestDefinedNameInsertRow(t *testing.T) {
+	f := NewFile()
+	assert.NoError(t, f.SetDefinedName(&DefinedName{Name: "defined_name1", RefersTo: "Sheet1!A2", Scope: "Workbook"}))
+
+	assert.NoError(t, f.SetDefinedName(&DefinedName{Name: "defined_name2", RefersTo: "Sheet1!A2:A9", Scope: "Workbook"}))
+
+	assert.NoError(t, f.InsertRow("Sheet1", 1))
+
+	assert.Equal(t, f.getDefinedNameRefTo("defined_name1", "Sheet1"), "Sheet1!A3", "Invalid defined name")
+	assert.Equal(t, f.getDefinedNameRefTo("defined_name2", "Sheet1"), "Sheet1!A3:A10", "Invalid defined name")
+
+	assert.NoError(t, f.SetDefinedName(&DefinedName{Name: "defined_name3", RefersTo: "Sheet1!A10:A12", Scope: "Workbook"}))
+	assert.NoError(t, f.InsertRow("Sheet1", 11))
+	assert.Equal(t, f.getDefinedNameRefTo("defined_name3", "Sheet1"), "Sheet1!A10:A13", "Invalid defined name")
+
+}
+
 func TestGroupSheets(t *testing.T) {
 	f := NewFile()
 	sheets := []string{"Sheet2", "Sheet3"}

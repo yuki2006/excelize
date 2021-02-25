@@ -49,6 +49,10 @@ func (f *File) adjustHelper(sheet string, dir adjustDirection, num, offset int) 
 	if err = f.adjustMergeCells(ws, dir, num, offset); err != nil {
 		return err
 	}
+	if err = f.adjustDefinedName(dir, num, offset); err != nil {
+		return err
+	}
+
 	if err = f.adjustAutoFilter(ws, dir, num, offset); err != nil {
 		return err
 	}
@@ -266,15 +270,15 @@ func (f *File) adjustMergeCells(ws *xlsxWorksheet, dir adjustDirection, num, off
 				f.deleteMergeCell(ws, i)
 				i--
 			}
-			y1 = f.adjustMergeCellsHelper(y1, num, offset)
-			y2 = f.adjustMergeCellsHelper(y2, num, offset)
+			y1 = f.adjustAreaCellsHelper(y1, num, offset)
+			y2 = f.adjustAreaCellsHelper(y2, num, offset)
 		} else {
 			if x1 == num && x2 == num && offset < 0 {
 				f.deleteMergeCell(ws, i)
 				i--
 			}
-			x1 = f.adjustMergeCellsHelper(x1, num, offset)
-			x2 = f.adjustMergeCellsHelper(x2, num, offset)
+			x1 = f.adjustAreaCellsHelper(x1, num, offset)
+			x2 = f.adjustAreaCellsHelper(x2, num, offset)
 		}
 		if x1 == x2 && y1 == y2 {
 			f.deleteMergeCell(ws, i)
@@ -287,10 +291,10 @@ func (f *File) adjustMergeCells(ws *xlsxWorksheet, dir adjustDirection, num, off
 	return nil
 }
 
-// adjustMergeCellsHelper provides a function for adjusting merge cells to
+// adjustAreaCellsHelper provides a function for adjusting merge cells to
 // compare and calculate cell axis by the given pivot, operation axis and
 // offset.
-func (f *File) adjustMergeCellsHelper(pivot, num, offset int) int {
+func (f *File) adjustAreaCellsHelper(pivot, num, offset int) int {
 	if pivot >= num {
 		pivot += offset
 		if pivot < 1 {
@@ -332,6 +336,66 @@ func (f *File) adjustCalcChain(dir adjustDirection, num, offset, sheetID int) er
 			if newCol := colNum + offset; newCol > 0 {
 				f.CalcChain.C[index].R, _ = CoordinatesToCellName(newCol, rowNum)
 			}
+		}
+	}
+	return nil
+}
+
+// adjustDefinedName provides a function to update the definedName when
+// inserting or deleting rows or columns.
+func (f *File) adjustDefinedName(dir adjustDirection, num, offset int) error {
+	wb := f.workbookReader()
+	if wb.DefinedNames != nil {
+		for i, dn := range wb.DefinedNames.DefinedName {
+			definedName := DefinedName{
+				Name:     dn.Name,
+				Comment:  dn.Comment,
+				RefersTo: dn.Data,
+				Scope:    "Workbook",
+			}
+			if dn.LocalSheetID != nil && *dn.LocalSheetID >= 0 {
+				definedName.Scope = f.getSheetNameByID(*dn.LocalSheetID + 1)
+			}
+			split := strings.Split(definedName.RefersTo, "!")
+			sheet := split[0]
+			refer := split[1]
+
+			if !strings.Contains(refer, ":") {
+				refer += ":" + refer
+			}
+
+			coordinates, err := f.areaRefToCoordinates(refer)
+			if err != nil {
+				return err
+			}
+			x1, y1, x2, y2 := coordinates[0], coordinates[1], coordinates[2], coordinates[3]
+			if dir == rows {
+				if y1 == num && y2 == num && offset < 0 {
+					if err := f.DeleteDefinedName(&definedName); err != nil {
+						return err
+					}
+				}
+				y1 = f.adjustAreaCellsHelper(y1, num, offset)
+				y2 = f.adjustAreaCellsHelper(y2, num, offset)
+			} else {
+				if x1 == num && x2 == num && offset < 0 {
+					if err := f.DeleteDefinedName(&definedName); err != nil {
+						return err
+					}
+				}
+				x1 = f.adjustAreaCellsHelper(x1, num, offset)
+				x2 = f.adjustAreaCellsHelper(x2, num, offset)
+			}
+			if definedName.RefersTo, err = f.coordinatesToAreaRef([]int{x1, y1, x2, y2}); err != nil {
+				return err
+			}
+			refersTo := definedName.RefersTo
+			splitRefers := strings.Split(definedName.RefersTo, ":")
+			if splitRefers[0] == splitRefers[1] {
+				refersTo = splitRefers[0]
+			}
+			wb.DefinedNames.DefinedName[i].Data = sheet + "!" + refersTo
+
 		}
 	}
 	return nil
