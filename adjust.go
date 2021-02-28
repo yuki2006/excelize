@@ -394,8 +394,13 @@ func (f *File) adjustDefinedName(dir adjustDirection, num, offset int) error {
 			if splitRefers[0] == splitRefers[1] {
 				refersTo = splitRefers[0]
 			}
-			wb.DefinedNames.DefinedName[i].Data = sheet + "!" + refersTo
 
+			col, row, err := CellNameToCoordinates(refersTo)
+			if err != nil {
+				return err
+			}
+			referAbs, _ := CoordinatesToCellName(col, row, true)
+			wb.DefinedNames.DefinedName[i].Data = sheet + "!" + referAbs
 		}
 	}
 	return nil
