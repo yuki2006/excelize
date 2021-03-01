@@ -13,14 +13,16 @@ package excelize
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 )
 
-type adjustDirection bool
+type adjustDirection int
 
 const (
-	columns adjustDirection = false
-	rows    adjustDirection = true
+	none    adjustDirection = 0
+	columns adjustDirection = 1
+	rows    adjustDirection = 2
 )
 
 // adjustHelper provides a function to adjust rows and columns dimensions,
@@ -358,7 +360,75 @@ func (f *File) adjustDefinedName(dir adjustDirection, num, offset int) error {
 			}
 			split := strings.Split(definedName.RefersTo, "!")
 			sheet := split[0]
-			refer := split[1]
+			referSplit := strings.Split(strings.ReplaceAll(split[1], "$", ""), ":")
+
+			refer := referSplit[0]
+
+			// check A:B
+			col, row, direction, err := directionOrSplitCellName(referSplit[0])
+
+			if direction == rows || direction == columns {
+				if dir == rows && direction == rows {
+					x1, _ := strconv.Atoi(col)
+					x2, _ := strconv.Atoi(col)
+					if len(referSplit) > 1 {
+						x2, _ = strconv.Atoi(referSplit[1])
+					}
+
+					if x1 == num && x2 == num && offset < 0 {
+						if err := f.DeleteDefinedName(&definedName); err != nil {
+							return err
+						}
+					}
+					x1 = f.adjustAreaCellsHelper(x1, num, offset)
+					x2 = f.adjustAreaCellsHelper(x2, num, offset)
+
+					definedNameRefer := ""
+					xx1 := strconv.Itoa(x1)
+					definedNameRefer += "$" + xx1
+					if x1 != x2 {
+						xx2 := strconv.Itoa(x2)
+						definedNameRefer += ":$" + xx2
+					}
+
+					wb.DefinedNames.DefinedName[i].Data = sheet + "!" + definedNameRefer
+
+					continue
+				} else if dir == columns && direction == columns {
+					y1 := row
+					y2 := row
+					if len(referSplit) > 1 {
+						y2, _ = ColumnNameToNumber(referSplit[1])
+					}
+
+					if y1 == num && y2 == num && offset < 0 {
+						if err := f.DeleteDefinedName(&definedName); err != nil {
+							return err
+						}
+					}
+					y1 = f.adjustAreaCellsHelper(y1, num, offset)
+					y2 = f.adjustAreaCellsHelper(y2, num, offset)
+
+					definedNameRefer := ""
+					yy1, err := ColumnNumberToName(y1)
+					if err != nil {
+						return err
+					}
+					definedNameRefer += "$" + yy1
+					if y1 != y2 {
+						yy2, err := ColumnNumberToName(y2)
+						if err != nil {
+							return err
+						}
+						definedNameRefer += ":$" + yy2
+					}
+
+					wb.DefinedNames.DefinedName[i].Data = sheet + "!" + definedNameRefer
+
+					continue
+				}
+				continue
+			}
 
 			if !strings.Contains(refer, ":") {
 				refer += ":" + refer
@@ -389,19 +459,46 @@ func (f *File) adjustDefinedName(dir adjustDirection, num, offset int) error {
 			if definedName.RefersTo, err = f.coordinatesToAreaRef([]int{x1, y1, x2, y2}); err != nil {
 				return err
 			}
-			refersTo := definedName.RefersTo
 			splitRefers := strings.Split(definedName.RefersTo, ":")
-			if splitRefers[0] == splitRefers[1] {
-				refersTo = splitRefers[0]
+
+			definedNameRefer, _ := CellNameToAbsolute(splitRefers[0])
+			if splitRefers[0] != splitRefers[1] {
+				absCellName, _ := CellNameToAbsolute(splitRefers[1])
+				definedNameRefer += ":" + absCellName
 			}
 
-			col, row, err := CellNameToCoordinates(refersTo)
-			if err != nil {
-				return err
-			}
-			referAbs, _ := CoordinatesToCellName(col, row, true)
-			wb.DefinedNames.DefinedName[i].Data = sheet + "!" + referAbs
+			wb.DefinedNames.DefinedName[i].Data = sheet + "!" + definedNameRefer
 		}
 	}
 	return nil
+}
+
+// "A1" or "A" or "1"
+func directionOrSplitCellName(cell string) (col string, row int, direction adjustDirection, err error) {
+
+	alpha := func(r rune) bool {
+		return ('A' <= r && r <= 'Z') || ('a' <= r && r <= 'z')
+	}
+	i := strings.LastIndexFunc(cell, alpha)
+	if i == len(cell)-1 {
+		return cell, 0, columns, nil
+	}
+
+	col, rowstr := cell[:i+1], cell[i+1:]
+	if row, err := strconv.Atoi(rowstr); err == nil && row > 0 {
+		if i == -1 {
+			return "", row, rows, nil
+		}
+		return col, row, none, nil
+	}
+
+	return "", -1, none, newInvalidCellNameError(cell)
+}
+
+func CellNameToAbsolute(cellName string) (string, error) {
+	col, row, err := CellNameToCoordinates(cellName)
+	if err != nil {
+		return "", err
+	}
+	return CoordinatesToCellName(col, row, true)
 }
