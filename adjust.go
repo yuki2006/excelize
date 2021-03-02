@@ -51,7 +51,7 @@ func (f *File) adjustHelper(sheet string, dir adjustDirection, num, offset int) 
 	if err = f.adjustMergeCells(ws, dir, num, offset); err != nil {
 		return err
 	}
-	if err = f.adjustDefinedName(dir, num, offset); err != nil {
+	if err = f.adjustDefinedName(sheet, dir, num, offset); err != nil {
 		return err
 	}
 
@@ -345,29 +345,37 @@ func (f *File) adjustCalcChain(dir adjustDirection, num, offset, sheetID int) er
 
 // adjustDefinedName provides a function to update the definedName when
 // inserting or deleting rows or columns.
-func (f *File) adjustDefinedName(dir adjustDirection, num, offset int) error {
+func (f *File) adjustDefinedName(sheet string, dir adjustDirection, num, offset int) error {
 	wb := f.workbookReader()
 	if wb.DefinedNames != nil {
-		for i, dn := range wb.DefinedNames.DefinedName {
+		for definedIndex, dn := range wb.DefinedNames.DefinedName {
 			definedName := DefinedName{
 				Name:     dn.Name,
 				Comment:  dn.Comment,
 				RefersTo: dn.Data,
 				Scope:    "Workbook",
 			}
-			if dn.LocalSheetID != nil && *dn.LocalSheetID >= 0 {
-				definedName.Scope = f.getSheetNameByID(*dn.LocalSheetID + 1)
-			}
-			split := strings.Split(definedName.RefersTo, "!")
-			sheet := split[0]
-			referSplit := strings.Split(strings.ReplaceAll(split[1], "$", ""), ":")
 
-			refer := referSplit[0]
+			split := strings.Split(definedName.RefersTo, "!")
+			definedNameSheet := split[0]
+
+			if split[1] == formulaErrorREF {
+				continue
+			}
+
+			if definedNameSheet != sheet {
+				continue
+			}
+
+			referSplit := strings.Split(strings.ReplaceAll(split[1], "$", ""), ":")
 
 			// check A:B
 			col, row, direction, err := directionOrSplitCellName(referSplit[0])
+			if err != nil {
+				return err
+			}
 
-			if direction == rows || direction == columns {
+			ajustDirection := func() error {
 				if dir == rows && direction == rows {
 					x1, _ := strconv.Atoi(col)
 					x2, _ := strconv.Atoi(col)
@@ -390,10 +398,7 @@ func (f *File) adjustDefinedName(dir adjustDirection, num, offset int) error {
 						xx2 := strconv.Itoa(x2)
 						definedNameRefer += ":$" + xx2
 					}
-
-					wb.DefinedNames.DefinedName[i].Data = sheet + "!" + definedNameRefer
-
-					continue
+					wb.DefinedNames.DefinedName[definedIndex].Data = definedNameSheet + "!" + definedNameRefer
 				} else if dir == columns && direction == columns {
 					y1 := row
 					y2 := row
@@ -422,17 +427,19 @@ func (f *File) adjustDefinedName(dir adjustDirection, num, offset int) error {
 						}
 						definedNameRefer += ":$" + yy2
 					}
+					wb.DefinedNames.DefinedName[definedIndex].Data = definedNameSheet + "!" + definedNameRefer
+				}
+				return nil
+			}
 
-					wb.DefinedNames.DefinedName[i].Data = sheet + "!" + definedNameRefer
-
-					continue
+			if direction == rows || direction == columns {
+				if err := ajustDirection(); err != nil {
+					return err
 				}
 				continue
 			}
 
-			if !strings.Contains(refer, ":") {
-				refer += ":" + refer
-			}
+			refer := referSplit[0] + ":" + referSplit[len(referSplit)-1]
 
 			coordinates, err := f.areaRefToCoordinates(refer)
 			if err != nil {
@@ -441,17 +448,13 @@ func (f *File) adjustDefinedName(dir adjustDirection, num, offset int) error {
 			x1, y1, x2, y2 := coordinates[0], coordinates[1], coordinates[2], coordinates[3]
 			if dir == rows {
 				if y1 == num && y2 == num && offset < 0 {
-					if err := f.DeleteDefinedName(&definedName); err != nil {
-						return err
-					}
+					wb.DefinedNames.DefinedName[definedIndex].Data = definedNameSheet + "!" + formulaErrorREF
 				}
 				y1 = f.adjustAreaCellsHelper(y1, num, offset)
 				y2 = f.adjustAreaCellsHelper(y2, num, offset)
 			} else {
 				if x1 == num && x2 == num && offset < 0 {
-					if err := f.DeleteDefinedName(&definedName); err != nil {
-						return err
-					}
+					wb.DefinedNames.DefinedName[definedIndex].Data = definedNameSheet + "!" + formulaErrorREF
 				}
 				x1 = f.adjustAreaCellsHelper(x1, num, offset)
 				x2 = f.adjustAreaCellsHelper(x2, num, offset)
@@ -467,7 +470,7 @@ func (f *File) adjustDefinedName(dir adjustDirection, num, offset int) error {
 				definedNameRefer += ":" + absCellName
 			}
 
-			wb.DefinedNames.DefinedName[i].Data = sheet + "!" + definedNameRefer
+			wb.DefinedNames.DefinedName[definedIndex].Data = definedNameSheet + "!" + definedNameRefer
 		}
 	}
 	return nil
@@ -481,17 +484,21 @@ func directionOrSplitCellName(cell string) (col string, row int, direction adjus
 	}
 	i := strings.LastIndexFunc(cell, alpha)
 	if i == len(cell)-1 {
+		// ex. AB
 		return cell, 0, columns, nil
 	}
 
 	col, rowstr := cell[:i+1], cell[i+1:]
 	if row, err := strconv.Atoi(rowstr); err == nil && row > 0 {
 		if i == -1 {
+			// ex. 12
 			return "", row, rows, nil
 		}
+		// ex.  AB12
 		return col, row, none, nil
 	}
 
+	// error
 	return "", -1, none, newInvalidCellNameError(cell)
 }
 
