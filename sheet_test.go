@@ -264,18 +264,37 @@ func TestDefinedName(t *testing.T) {
 func TestDefinedNameInsertRow(t *testing.T) {
 	f := NewFile()
 	assert.NoError(t, f.SetDefinedName(&DefinedName{Name: "defined_name1", RefersTo: "Sheet1!A2", Scope: "Workbook"}))
-
 	assert.NoError(t, f.SetDefinedName(&DefinedName{Name: "defined_name2", RefersTo: "Sheet1!A2:A9", Scope: "Workbook"}))
 
 	assert.NoError(t, f.InsertRow("Sheet1", 1))
 
-	assert.Equal(t, f.getDefinedNameRefTo("defined_name1", "Sheet1"), "Sheet1!A3", "Invalid defined name")
-	assert.Equal(t, f.getDefinedNameRefTo("defined_name2", "Sheet1"), "Sheet1!A3:A10", "Invalid defined name")
+	assert.Equal(t, "Sheet1!$A$3", f.getDefinedNameRefTo("defined_name1", "Sheet1"), "Invalid defined name")
+	assert.Equal(t, "Sheet1!$A$3:$A$10", f.getDefinedNameRefTo("defined_name2", "Sheet1"), "Invalid defined name")
 
 	assert.NoError(t, f.SetDefinedName(&DefinedName{Name: "defined_name3", RefersTo: "Sheet1!A10:A12", Scope: "Workbook"}))
 	assert.NoError(t, f.InsertRow("Sheet1", 11))
-	assert.Equal(t, f.getDefinedNameRefTo("defined_name3", "Sheet1"), "Sheet1!A10:A13", "Invalid defined name")
+	assert.Equal(t, "Sheet1!$A$10:$A$13", f.getDefinedNameRefTo("defined_name3", "Sheet1"), "Invalid defined name")
 
+	f.NewSheet("Sheet2")
+
+	assert.NoError(t, f.InsertRow("Sheet2", 11))
+
+	assert.Equal(t, "Sheet1!$A$3", f.getDefinedNameRefTo("defined_name1", "Sheet1"), "Invalid defined name")
+	assert.Equal(t, "Sheet1!$A$3:$A$10", f.getDefinedNameRefTo("defined_name2", "Sheet1"), "Invalid defined name")
+	assert.Equal(t, "Sheet1!$A$10:$A$13", f.getDefinedNameRefTo("defined_name3", "Sheet1"), "Invalid defined name")
+
+	assert.NoError(t, f.RemoveRow("Sheet1", 3))
+	assert.Equal(t, "Sheet1!#REF!", f.getDefinedNameRefTo("defined_name1", "Sheet1"), "Invalid defined name")
+
+}
+
+func TestNotREFNameInsertRow(t *testing.T) {
+	f, err := OpenFile(filepath.Join("test", "NotREFDefinedName.xlsx"))
+	if !assert.NoError(t, err) {
+		t.FailNow()
+	}
+	assert.NoError(t, f.InsertRow("Sheet1", 1))
+	assert.Equal(t, "Sheet1!#REF!", f.getDefinedNameRefTo("test", "Sheet1"), "Invalid defined name")
 }
 
 func TestGroupSheets(t *testing.T) {
